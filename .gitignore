@@ -1,0 +1,9 @@
+node_modules
+.babelrc
+tsconfig.json
+.eslintrc.json
+.prettierrc
+.env
+nodemon.json
+uploads
+dist
