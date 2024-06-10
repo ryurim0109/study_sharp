@@ -1,134 +1,57 @@
+import { config } from 'config';
 import { RequestHandler } from 'express';
 import fs from 'fs';
+import path from 'path';
 import sharp from 'sharp';
 
-enum SharpType {
+enum SharpEnum {
 	resize,
 	rotate,
 	composite,
+	grayscale,
 }
 
-const typeList = Object.keys(SharpType).filter((key) => isNaN(Number(key)));
+const typeList = Object.keys(SharpEnum).filter((key) => isNaN(Number(key)));
 
 export const get: RequestHandler<any, any, any> = async (req, res, next) => {
 	res.json({ success: true, typeList });
-};
-
-export const resize: RequestHandler<any, any, any> = async (req, res, next) => {
-	if (!req.file || !req.file.path) return;
-
-	try {
-		sharp(req.file.path) // 압축할 이미지 경로
-			.resize({ width: 600 }) // 비율을 유지하며 가로 크기 줄이기
-			.withMetadata() // 이미지의 exif데이터 유지
-			.toBuffer((err, buffer) => {
-				if (err) throw err;
-				// 압축된 파일 새로 저장(덮어씌우기)
-				fs.writeFile(req.file!.path, buffer, (err) => {
-					if (err) throw err;
-				});
-			});
-		res.json({ filename: `${req.file.filename}` });
-	} catch (err) {
-		console.log(err);
-	}
-};
-
-export const rotate: RequestHandler<
-	any,
-	any,
-	{
-		rotate: number;
-	}
-> = async (req, res, next) => {
-	if (!req.file || !req.file.path) return next({ status: 404, message: '파일을 첨부해주세요' });
-	const { rotate } = req.body;
-	if (!rotate) return next({ status: 404, message: '회전 정보를 입력해주세요' });
-
-	try {
-		sharp(req.file.path) // 압축할 이미지 경로
-			.rotate(Number(rotate)) // rotate
-			.withMetadata() // 이미지의 exif데이터 유지
-			.toBuffer((err, buffer) => {
-				if (err) throw err;
-				// 압축된 파일 새로 저장(덮어씌우기)
-				fs.writeFile(req.file!.path, buffer, (err) => {
-					if (err) throw err;
-				});
-			});
-		res.json({ filename: `${req.file.filename}` });
-	} catch (err) {
-		console.log(err);
-	}
 };
 
 export const sharpType: RequestHandler<{ type: string }, any, any> = async (req, res, next) => {
 	const { type = '' } = req.params;
 	if (!typeList.includes(type)) return next({ status: 404, message: '존재하지 않는 타입입니다.' });
 	if (!req.file || !req.file.path) return next({ status: 404, message: '파일을 첨부해주세요' });
+	const { rotate = 0 } = req.body;
+	if (!rotate && type === 'rotate') {
+		return next({ status: 404, message: '회전 정보를 입력해주세요' });
+	}
 
 	try {
-		switch (type) {
-			case 'resize':
-				sharp(req.file.path) // 압축할 이미지 경로
-					.resize({ width: 600 }) // 비율을 유지하며 가로 크기 줄이기
-					.withMetadata() // 이미지의 exif데이터 유지
-					.toBuffer((err, buffer) => {
-						if (err) throw err;
-						// 압축된 파일 새로 저장(덮어씌우기)
-						fs.writeFile(req.file!.path, buffer, (err) => {
-							if (err) throw err;
-						});
-					});
-				res.json({ filename: `${req.file.filename}` });
-				break;
-			case 'rotate':
-				const { rotate } = req.body;
-				if (!rotate) return next({ status: 404, message: '회전 정보를 입력해주세요' });
-				sharp(req.file.path) // 압축할 이미지 경로
-					.rotate(Number(rotate)) // rotate
-					.withMetadata() // 이미지의 exif데이터 유지
-					.toBuffer((err, buffer) => {
-						if (err) throw err;
-						// 압축된 파일 새로 저장(덮어씌우기)
-						fs.writeFile(req.file!.path, buffer, (err) => {
-							if (err) throw err;
-						});
-					});
-				res.json({ filename: `${req.file.filename}` });
-				break;
-			case 'composite':
-				const watermark00 = await sharp('uploads/watermark/sy.png').toBuffer();
-				const watermark01 = await sharp('uploads/watermark/sy01.png').toBuffer();
-				const watermark02 = await sharp('uploads/watermark/sy02.png').toBuffer();
+		let resize = {};
+		let compositeList = [];
 
-				sharp(req.file.path)
-					.composite([
-						{
-							input: watermark00,
-							gravity: 'north',
-						},
-						{
-							input: watermark01,
-							gravity: 'south',
-						},
-						{
-							input: watermark02,
-							gravity: 'east',
-						},
-					])
-					.withMetadata()
-					.toBuffer((err, buffer) => {
-						if (err) throw err;
-						fs.writeFile(req.file!.path, buffer, (err) => {
-							if (err) throw err;
-						});
-					});
-				res.json({ filename: `${req.file.filename}` });
-				break;
-			default:
-				break;
+		if (type === 'resize') resize = { width: 600 };
+
+		if (type === 'composite') {
+			const watermark01 = await sharp('uploads/watermark/sy01.png').toBuffer();
+			compositeList.push({
+				input: watermark01,
+				gravity: 'northwest',
+			});
 		}
+		const ext = path.extname(req.file!.filename).toLowerCase();
+		let filename = `./uploads/${req.file!.filename}`;
+		const webpFilename = filename.slice(0, -ext.length) + '.webp';
+		sharp(req.file.path) // 압축할 이미지 경로
+			.resize(resize) // 비율을 유지하며 가로 크기 줄이기
+			.rotate(Number(rotate))
+			.composite(compositeList)
+			.greyscale(type === 'grayscale')
+			.webp()
+			.withMetadata() // 이미지의 exif데이터 유지
+			.toFile(webpFilename);
+
+		res.json({ imageUrl: `${config.server.host}/${req.file!.filename}` });
 	} catch (err) {
 		console.warn(err);
 	}
